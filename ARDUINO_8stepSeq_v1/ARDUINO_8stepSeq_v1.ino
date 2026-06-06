@@ -30,15 +30,14 @@ void setup() {
     pinMode(pinBotones[i], INPUT_PULLUP);
     pinMode(pinLeds[i], OUTPUT);
   }
-  //GENERO SEED PARA BOTON RANDOM, LEO VOLTAJE DE PIN PARA GENERAR ALEATOREIDAD
-  randomSeed(analogRead(A4)); //LEO EL VALOR DEL POTENCIOMETRO DE BPM PARA TENER UN MEJOR RANDOM
+  
 }
 
 
 //LOOP GENERAL
 
 void loop() {
- // DEFINO LOOP
+ //DEFINO LOOP
  //CALCULO DE BPM min 60000ms/80 BPM=750ms | CALCULO DE BPM MAX 60000ms/220 BPM = 272ms
  int tiempoNegra = map(analogRead(pinPot),0,1023,750,272);
  int BPM = 60000/tiempoNegra;
@@ -61,6 +60,8 @@ void loop() {
  bool comboAct = (digitalRead(pinBotones[0]) == LOW && digitalRead(pinBotones[2]) == LOW); //AND ENTRE BOTONES 1 y 3
  if (comboAct == true && comboAnt == false){ //COMPARO ESTADOS, SI HUBO CAMBIO ENTRA EN EL IF
      for (int i=0; i<8; i++){
+      //GENERO SEED PARA BOTON RANDOM, LEO VOLTAJE DE PIN PARA GENERAR ALEATOREIDAD
+      randomSeed(millis); //LEO EL VALOR DEL POTENCIOMETRO DE BPM PARA TENER UN MEJOR RANDOM
       estadoPasos[i] = random(2); //RANDOMIZA PASOS ACTIVADOS
       notasPlay[i] = escala[random(0, 8)];
     }
