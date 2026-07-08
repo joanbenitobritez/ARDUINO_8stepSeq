@@ -1,305 +1,256 @@
-#include <Arduino.h> // Incluye las definiciones base de entradas y salidas del microcontrolador.
-#include <U8x8lib.h> // Librería de control para pantallas OLED, optimizada para enviar texto sin saturar la RAM.
-#include <Wire.h>    // Librería que habilita los pines físicos SDA y SCL para el bus de comunicación I2C.
-#include <Bounce2.h> // Librería que actúa como un filtro RC por software para eliminar el ruido eléctrico (rebote) de los pulsadores mecánicos.
-#include <Encoder.h> // Librería que lee las interrupciones de hardware para decodificar los pulsos de cuadratura del encoder rotativo.
+#include <Arduino.h>
+#include <U8x8lib.h> 
+#include <Wire.h>    
+#include <Bounce2.h> 
+#include <Encoder.h> 
+#include <MIDI.h>    // Librería oficial de FortySevenEffects para abstracción del protocolo MIDI
 
 // =================================================================
-// 1. OBJETOS DE HARDWARE VIRTUAL (Instancias)
+// 1. INSTANCIAS DE HARDWARE Y PROTOCOLO
 // =================================================================
-// Crea el controlador de la pantalla OLED SH1106 conectada por I2C.
+// Pantalla OLED en modo texto directo (sin buffer de RAM)
 U8X8_SH1106_128X64_NONAME_HW_I2C u8x8(U8X8_PIN_NONE); 
 
-// Crea el decodificador del encoder asignando los pines digitales 2 y 3 (pines con soporte de interrupción por hardware).
+// Encoder rotativo usando interrupciones de hardware puras en pines 2 y 3
 Encoder miEncoder(2, 3);          
 
-// Crea una matriz de 8 "filtros antideslizamiento" (debouncers) independientes, uno para cada botón de los pasos.
+// Filtros RC por software para botones digitales
 Bounce botones[8];                
-// Crea filtros individuales para los botones de control de transporte y avance.
-Bounce btnEncSW = Bounce();       
+Bounce btnEncSW = Bounce();
 Bounce btnStepUp = Bounce(); 
 
+// Instancia global del motor MIDI en el puerto serie por defecto
+MIDI_CREATE_DEFAULT_INSTANCE();
+
 // =================================================================
-// 2. ASIGNACIÓN DE PINES (Mapa Físico)
+// 2. ASIGNACIÓN DE PINES
 // =================================================================
-// Matriz estática en memoria flash con los 8 pines digitales conectados a los botones de los pasos musicales.
 const uint8_t PIN_BOTONES[8] = {5, 6, 7, 8, 9, 10, 11, 12};
-// Asignación de pines individuales para el resto de los periféricos.
-const uint8_t PIN_ENCODER_SW = 4; // Botón central del encoder rotativo.
-const uint8_t PIN_STEP_UP = A1;   // Pin usado como entrada digital para el botón "Avanzar Paso".
-const uint8_t PIN_STEP_DN = A6;   // Pin de entrada analógica pura (ADC) para el botón "Retroceder Paso".
-const uint8_t PIN_BUZZER = A0;    // Salida PWM para generar tonos audibles localmente.
-const uint8_t PIN_LED_G = A2;     // Salida digital para el cátodo Verde del LED RGB (Ánodo común).
-const uint8_t PIN_LED_R = A3;     // Salida digital para el cátodo Rojo del LED RGB (Ánodo común).
+const uint8_t PIN_ENCODER_SW = 4;
+const uint8_t PIN_STEP_UP = A1;
+// Pin A6 (ADC exclusivo sin registro digital). Se lee por voltaje, no usa Bounce2.
+const uint8_t PIN_STEP_DN = A6; 
+const uint8_t PIN_BUZZER = A0;
+const uint8_t PIN_LED_G = A2;
+const uint8_t PIN_LED_R = A3;
 
 // =================================================================
-// 3. VARIABLES DE ESTADO MUSICAL
+// 3. VARIABLES DE ESTADO Y DIRTY FLAGS
 // =================================================================
-// Matriz de 8 booleanos (flip-flops). 'true' significa que el paso emitirá sonido; 'false' lo silencia (Mute).
-bool estadoPasos[8] = {true, true, true, true, true, true, true, true}; 
-// Matriz que guarda un índice numérico (0 a 35) representando la altura de la nota asignada a cada paso.
-int notasPlay[8] = {4, 7, 9, 11, 12, 14, 16, 14}; 
+bool estadoPasos[8] = {true, true, true, true, true, true, true, true};
+int notasPlay[8] = {4, 7, 9, 11, 12, 14, 16, 14};
 
-// =================================================================
-// 4. BANDERAS DE ACTUALIZACIÓN VISUAL (Dirty Flags)
-// =================================================================
-// Estas variables booleanas le avisan a la pantalla qué sección específica debe refrescar, ahorrando ciclos de reloj.
-bool cambioPasos[8] = {true, true, true, true, true, true, true, true}; // Bandera individual para cada cajita en pantalla.
-bool cambioTransporte = true; // Se pone 'true' cuando cambiás entre PLAY, PAUSE o STOP.
-bool cambioBPM = true;        // Se pone 'true' cuando girás el encoder para cambiar la velocidad.
-bool cambioCabezal = true;    // Se pone 'true' cuando el secuenciador avanza al siguiente paso (para mover el cursor '^').
-bool encoderUsadoEnPaso[8] = {false}; // Bandera lógica para diferenciar si un botón se pulsó rápido (Mute) o si se mantuvo apretado para afinar.
+// Banderas de actualización selectiva (Dirty Flags)
+bool cambioPasos[8] = {true, true, true, true, true, true, true, true}; 
+bool cambioTransporte = true; 
+bool cambioBPM = true;
+bool cambioCabezal = true;
+bool encoderUsadoEnPaso[8] = {false};
 
-// =================================================================
-// 5. TABLAS DE DATOS ESTÁTICOS (Memoria Flash)
-// =================================================================
-// Tabla de conversión (LUT): Índices del 0 al 35 se traducen a frecuencias en Hertz para el Buzzer.
 const int escala[36] = {131, 139, 147, 156, 165, 175, 185, 196, 208, 220, 233, 247, 262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 784, 831, 880, 932, 988};
-// Tabla de conversión: Índices del 0 al 35 se traducen a texto para imprimir en pantalla (C3 = Do en 3ra octava).
 const char *nombresNotas[36] = {"C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3", "A#3", "B3", "C4", "C#4", "D4", "D#4", "E4", "F4", "F#4", "G4", "G#4", "A4", "A#4", "B4", "C5", "C#5", "D5", "D#5", "E5", "F5", "F#5", "G5", "G#5", "A5", "A#5", "B5"};
 
 // =================================================================
-// 6. VARIABLES DE CONTROL DEL SECUENCIADOR Y MOTOR DE TIEMPO
+// 4. MOTOR DE TIEMPO
 // =================================================================
-uint8_t estadoTransporte = 0;   // Máquina de estados principal: 0 = STOP, 1 = PLAY, 2 = PAUSE.
-int BPM = 165;                  // Pulsos por Minuto actuales.
-unsigned long tiempoPaso = 181; // El resultado matemático de los BPM convertido a milisegundos de duración por cada paso.
-unsigned long relojSeq = 0;     // Registro del reloj interno. Guarda en qué momento (millis) se disparó el último paso.
-int pasoActual = 0;             // Puntero de lectura actual (Cabezal). Cuenta en bucle de 0 a 7.
-int pasoAnterior = 0;           // Guarda dónde estaba el cabezal un ciclo atrás para poder borrar el cursor '^' viejo de la pantalla.
-int notaMidiActual = -1;        // Guarda el número de nota MIDI que está sonando actualmente. Se inicia en -1 (ninguna).
-unsigned long tiempoUltimoClic = 0; // Registro temporal para medir milisegundos entre dos pulsaciones (para detectar doble clic).
-long posicionEncoderAnt = 0;    // Memoria mecánica: Guarda el valor numérico de la posición previa de la perilla giratoria.
+uint8_t estadoTransporte = 0; // 0=STOP, 1=PLAY, 2=PAUSE
+int BPM = 165;
+unsigned long tiempoPaso = 181; 
+unsigned long relojSeq = 0;
+int pasoActual = 0;
+int pasoAnterior = 0;           
+int notaMidiActual = -1;        
+unsigned long tiempoUltimoClic = 0; 
+long posicionEncoderAnt = 0;    
 
-// Variables exclusivas para el filtro antideslizamiento manual del Pin A6
-bool estadoAntStepDn = HIGH;          // Guarda el estado de voltaje del ciclo anterior (HIGH o LOW).
-unsigned long tiempoDebounceStepDn = 0; // Temporizador para esperar a que el contacto físico se estabilice (15ms).
+// Variables para debounce analógico (Filtro por software sobre ADC)
+bool estadoAntStepDn = HIGH;
+unsigned long tiempoDebounceStepDn = 0;
 
-// =================================================================
-// 7. RUTINA DE ARRANQUE (Se ejecuta una sola vez)
-// =================================================================
 void setup() {
-  Serial.begin(115200); // Abre el puerto USB serial a 115200 baudios para la transmisión de datos MIDI.
-  u8x8.begin();         // Inicializa el hardware de la pantalla.
-  u8x8.setFont(u8x8_font_chroma48medium8_r); // Carga una fuente de texto específica en la memoria de video.
+  // Inicializa la librería MIDI. Por defecto configura el puerto a 31250 baudios.
+  MIDI.begin(1); 
+  // Sobrescribimos el baudrate a 115200 para maximizar la velocidad sobre USB.
+  Serial.begin(115200); 
+
+  u8x8.begin();
+  u8x8.setFont(u8x8_font_chroma48medium8_r); 
   
-  pinMode(PIN_BUZZER, OUTPUT); // Configura el pin A0 como salida de voltaje para audio.
-  pinMode(PIN_LED_R, OUTPUT);  // Configura el pin del LED Rojo como salida.
-  pinMode(PIN_LED_G, OUTPUT);  // Configura el pin del LED Verde como salida.
-  
-  // Bucle 'for' para configurar los 8 pines de los botones en cadena.
+  pinMode(PIN_BUZZER, OUTPUT); 
+  pinMode(PIN_LED_R, OUTPUT);
+  pinMode(PIN_LED_G, OUTPUT); 
+
   for (int i = 0; i < 8; i++) {
-    // INPUT_PULLUP activa una resistencia interna de 20k ohms conectada a 5V. El botón físico debe conectar el pin a GND (masa).
     botones[i].attach(PIN_BOTONES[i], INPUT_PULLUP);
-    botones[i].interval(10); // Establece el umbral de filtrado de ruido eléctrico en 10 milisegundos.
+    botones[i].interval(10);
   }
   
-  // Configuración de resistencias Pull-Up y filtros para los botones de control restantes.
   btnEncSW.attach(PIN_ENCODER_SW, INPUT_PULLUP);
   btnEncSW.interval(10);
   btnStepUp.attach(PIN_STEP_UP, INPUT_PULLUP); 
   btnStepUp.interval(10);
 }
 
-// =================================================================
-// 8. BUCLE PRINCIPAL (Se repite continuamente a máxima velocidad)
-// =================================================================
 void loop() {
-  
-  // 8.1 LECTURA DE HARDWARE DE ENTRADA DIGITAL
-  for (int i = 0; i < 8; i++) botones[i].update(); // Revisa el estado de voltaje de los 8 pines y actualiza la lógica.
-  btnEncSW.update();   // Refresca estado del botón del encoder.
-  btnStepUp.update();  // Refresca estado del botón de avanzar.
+  // ---------------------------------------------------------------
+  // A. PRIORIDAD 1: ESCANEO DE ENTRADAS (Polling & ADC)
+  // ---------------------------------------------------------------
+  for (int i = 0; i < 8; i++) botones[i].update();
+  btnEncSW.update();
+  btnStepUp.update();  
 
-  // 8.2 LECTURA DE ENTRADA ANALÓGICA (PIN A6)
-  // analogRead devuelve de 0 a 1023. Si el voltaje está por debajo de ~2.5V (< 500), se considera estado lógico LOW (presionado).
+  // Debounce manual para el pin analógico A6 (Lectura de divisor de tensión)
   bool estadoActualStepDn = (analogRead(PIN_STEP_DN) < 500) ? LOW : HIGH;
-  bool stepDnPresionado = false; // Variable local temporal que actúa como disparador de la acción.
+  bool stepDnPresionado = false;
   
-  // Filtro manual: Si el estado eléctrico cambió respecto al ciclo anterior Y pasaron más de 15ms...
   if (estadoActualStepDn != estadoAntStepDn && millis() - tiempoDebounceStepDn > 15) {
-    // Si el estado estabilizado es LOW (botón tocando masa), activa el disparador.
     if (estadoActualStepDn == LOW) stepDnPresionado = true; 
-    
-    estadoAntStepDn = estadoActualStepDn; // Actualiza la memoria con el nuevo estado eléctrico firme.
-    tiempoDebounceStepDn = millis();      // Reinicia el reloj del filtro de rebote.
+    estadoAntStepDn = estadoActualStepDn; 
+    tiempoDebounceStepDn = millis();      
   }
 
-  // 8.3 MÁQUINA DE ESTADOS (Botón central Encoder)
-  // ".fell()" detecta el flanco de bajada (la transición de 5V a 0V al momento de apretar el botón).
+  // ---------------------------------------------------------------
+  // B. PRIORIDAD 2: MÁQUINA DE ESTADOS DEL TRANSPORTE
+  // ---------------------------------------------------------------
   if (btnEncSW.fell()) { 
-    // Si la diferencia de tiempo entre el clic actual y el anterior es menor a 300ms, es un doble clic.
     if (millis() - tiempoUltimoClic < 300) { 
-      estadoTransporte = 0; // 0 = Pone la máquina en STOP.
-      pasoActual = 0;       // Rebina el cabezal de lectura al paso cero.
-      cambioCabezal = true; // Levanta la bandera para obligar a la pantalla a repintar el cursor al inicio.
-      noTone(PIN_BUZZER);   // Corta cualquier señal cuadrada enviada al buzzer analógico.
+      estadoTransporte = 0; // STOP
+      pasoActual = 0;       
+      cambioCabezal = true; 
+      noTone(PIN_BUZZER);
       
-      // Si la variable de memoria MIDI no está vacía (-1), significa que hay una nota externa sostenida.
       if (notaMidiActual != -1) { 
-        enviarMIDI(0x80, notaMidiActual, 0); // Envía comando 0x80 (Note Off) a esa nota específica.
-        notaMidiActual = -1; // Vacía la memoria MIDI.
+        MIDI.sendNoteOff(notaMidiActual, 0, 1);
+        notaMidiActual = -1; 
       }
     } else {
-      // Si fue un clic simple (pasaron más de 300ms), alterna el estado: si estaba en PLAY pasa a PAUSE, y viceversa.
       estadoTransporte = (estadoTransporte == 1) ? 2 : 1;
-      if (estadoTransporte == 2) noTone(PIN_BUZZER); // Al entrar en PAUSE, silencia inmediatamente el buzzer.
+      if (estadoTransporte == 2) noTone(PIN_BUZZER);
     }
-    tiempoUltimoClic = millis(); // Guarda la marca de tiempo (timestamp) de esta acción.
-    cambioTransporte = true;     // Levanta la bandera para actualizar el texto PLAY/PAUSE/STOP en pantalla.
+    tiempoUltimoClic = millis();
+    cambioTransporte = true;
   }
 
-  // 8.4 AVANCE Y RETROCESO MANUAL (Solo operativo en modo PAUSE: estadoTransporte == 2)
+  // ---------------------------------------------------------------
+  // C. CONTROLES MANUALES (Solo en PAUSE)
+  // ---------------------------------------------------------------
   if (estadoTransporte == 2) { 
-    
     if (btnStepUp.fell()) {
-      // Avanza el cabezal. El '% 8' (operador módulo) obliga matemáticamente a que si el resultado llega a 8, vuelva a ser 0.
-      pasoActual = (pasoActual + 1) % 8; 
-      // Si el paso al que avanzamos está activo (true), emite un "beep" de 100ms.
+      pasoActual = (pasoActual + 1) % 8;
       if (estadoPasos[pasoActual]) tone(PIN_BUZZER, escala[notasPlay[pasoActual]], 100);
-      cambioCabezal = true; // Levanta la bandera del cursor de pantalla.
+      cambioCabezal = true; 
     }
 
     if (stepDnPresionado) {
-      // Retrocede el cabezal. Se le suma 8 antes del módulo para evitar errores aritméticos con números negativos en C++.
       pasoActual = (pasoActual - 1 + 8) % 8; 
       if (estadoPasos[pasoActual]) tone(PIN_BUZZER, escala[notasPlay[pasoActual]], 100);
-      cambioCabezal = true; // Levanta la bandera del cursor de pantalla.
+      cambioCabezal = true;
     }
   }
 
-  // 8.5 PROCESAMIENTO DEL ENCODER ROTATIVO
-  long posActual = miEncoder.read() / 4; // Lee el registro de interrupción de hardware y divide por 4 (cuadratura mecánica).
-  int delta = posActual - posicionEncoderAnt; // Resta la posición vieja de la actual para saber la dirección y saltos del giro.
+  // ---------------------------------------------------------------
+  // D. ESCANEO DEL ENCODER Y AFINACIÓN
+  // ---------------------------------------------------------------
+  long posActual = miEncoder.read() / 4;
+  int delta = posActual - posicionEncoderAnt;
 
-  if (delta != 0) { // Si hubo rotación física...
-    bool afinandoPaso = false; // Compuerta lógica local, asume por defecto que no estás pulsando ningún botón de paso.
-    
+  if (delta != 0) { 
+    bool afinandoPaso = false;
+
     for (int i = 0; i < 8; i++) { 
-      // Revisa si alguno de los 8 botones de paso está puenteado a masa (LOW).
       if (botones[i].read() == LOW) { 
-        notasPlay[i] += delta; // Suma o resta el movimiento del encoder al valor de la nota guardada.
-        
-        // Pinzas de seguridad (Clamping): Evita que el índice se salga de los límites de la matriz 'escala[36]'.
+        notasPlay[i] += delta;
         if (notasPlay[i] < 0) notasPlay[i] = 0; 
         if (notasPlay[i] > 35) notasPlay[i] = 35; 
         
-        encoderUsadoEnPaso[i] = true; // Flag que marca: "Este botón se usó para afinar, no para hacer Mute".
-        afinandoPaso = true;          // Activa la compuerta lógica avisando que el usuario SÍ está afinando.
-        cambioPasos[i] = true;        // Levanta la bandera visual de ese paso en particular.
+        encoderUsadoEnPaso[i] = true;
+        afinandoPaso = true;
+        cambioPasos[i] = true;
         
-        // Permite escuchar la afinación en tiempo real si el secuenciador NO está corriendo (estado distinto de 1).
         if (estadoTransporte != 1) tone(PIN_BUZZER, escala[notasPlay[i]], 100); 
       }
     }
     
-    // Si la compuerta lógia sigue en 'false', significa que giraste el encoder sin tocar botones de paso.
     if (!afinandoPaso) { 
-      BPM += (delta * 2); // Modifica la velocidad general de la máquina. El x2 es para que el cambio se sienta más ágil.
-      
-      // Pinzas de seguridad (Clamping) para los límites de velocidad del secuenciador.
-      if (BPM < 60) BPM = 60;   
+      BPM += (delta * 2);
+      if (BPM < 60) BPM = 60;
       if (BPM > 240) BPM = 240; 
       
-      // Recálculo matemático: 60.000 ms (1 minuto) dividido los BPM dividido 2 (corcheas).
       tiempoPaso = 60000UL / BPM / 2; 
-      cambioBPM = true; // Levanta bandera visual de los BPM.
+      cambioBPM = true; 
     }
-    posicionEncoderAnt = posActual; // Sobrescribe la memoria histórica con la posición mecánica actual.
+    posicionEncoderAnt = posActual; 
   }
 
-  // 8.6 LÓGICA DE ACTIVACIÓN / MUTE DE LOS PASOS
   for (int i = 0; i < 8; i++) {
-    // Si detecta un flanco de bajada (dedo apretando), resetea la protección de afinación de ese botón.
     if (botones[i].fell()) encoderUsadoEnPaso[i] = false; 
     
-    // Si detecta un flanco de subida (dedo soltando el botón)...
     if (botones[i].rose()) { 
-      // Si la protección NO se activó (es decir, fue una pulsación rápida sin usar el encoder)...
       if (!encoderUsadoEnPaso[i]) { 
-        estadoPasos[i] = !estadoPasos[i]; // Invierte el booleano: Si era true pasa a false, si era false pasa a true.
-        cambioPasos[i] = true; // Levanta la bandera visual para dibujar o borrar el corchete [].
+        estadoPasos[i] = !estadoPasos[i];
+        cambioPasos[i] = true;
       }
     }
   }
 
-  // 8.7 MOTOR DEL SECUENCIADOR EN TIEMPO REAL (Solo opera en PLAY: estadoTransporte == 1)
-  // Compara el reloj global 'millis()' con el registro 'relojSeq'. Si la diferencia es mayor al 'tiempoPaso'...
+  // ---------------------------------------------------------------
+  // E. PRIORIDAD MÁXIMA: MOTOR DEL SECUENCIADOR Y AUDIO
+  // ---------------------------------------------------------------
   if (estadoTransporte == 1 && (millis() - relojSeq >= tiempoPaso)) {
-    pasoActual = (pasoActual + 1) % 8; // Avanza el cabezal un pulso.
-    relojSeq = millis(); // Guarda este instante exacto como el nuevo punto de partida.
+    pasoActual = (pasoActual + 1) % 8;
+    relojSeq = millis(); 
     
-    // Si había una nota sonando del paso anterior, la apaga mediante MIDI para evitar colisiones de audio.
-    if (notaMidiActual != -1) { enviarMIDI(0x80, notaMidiActual, 0); notaMidiActual = -1; }
-    
-    // Si el flip-flop del paso actual está en 'true' (Activo)...
-    if (estadoPasos[pasoActual]) { 
-      tone(PIN_BUZZER, escala[notasPlay[pasoActual]]); // Enciende el hardware generador de PWM local.
-      
-      // La matriz de notas tiene índices de 0 a 35. El protocolo MIDI ubica el Do central (C3) en el número 48.
-      notaMidiActual = 48 + notasPlay[pasoActual];     // Suma el offset de mapeo MIDI.
-      enviarMIDI(0x90, notaMidiActual, 127);           // Transmite comando Note On (0x90) a máxima velocidad (127).
-    } else {
-      noTone(PIN_BUZZER); // Si el paso está en 'false', apaga el generador PWM local.
+    if (notaMidiActual != -1) { 
+      MIDI.sendNoteOff(notaMidiActual, 0, 1); 
+      notaMidiActual = -1;
     }
-    cambioPasos[pasoActual] = true; // Actualiza el dibujo de este paso particular.
-    cambioCabezal = true; // Levanta la bandera para desplazar el cursor visual '^' al compás del reloj.
+    
+    if (estadoPasos[pasoActual]) { 
+      tone(PIN_BUZZER, escala[notasPlay[pasoActual]]);
+      notaMidiActual = 48 + notasPlay[pasoActual];
+      MIDI.sendNoteOn(notaMidiActual, 127, 1);           
+    } else {
+      noTone(PIN_BUZZER); 
+    }
+    cambioPasos[pasoActual] = true; 
+    cambioCabezal = true;
   }
 
-  // 8.8 SISTEMA DE RENDERIZADO VISUAL EXTREMADAMENTE RÁPIDO
-  // En lugar de borrar y redibujar toda la pantalla, solo imprime caracteres nuevos donde las "Dirty Flags" lo exigen.
-
+  // ---------------------------------------------------------------
+  // F. PRIORIDAD BAJA: RENDERIZADO VISUAL ASÍNCRONO
+  // ---------------------------------------------------------------
   if (cambioTransporte) { 
-    u8x8.setCursor(0,0); // Posiciona el puntero de video en la columna 0, fila 0.
-    if(estadoTransporte==1) u8x8.print("PLAY "); 
+    u8x8.setCursor(0,0); 
+    if(estadoTransporte==1) u8x8.print("PLAY ");
     else if(estadoTransporte==2) u8x8.print("PAUSE"); 
-    else u8x8.print("STOP "); // Agrega espacios en blanco al final para sobrescribir letras residuales viejas.
-    cambioTransporte = false; // Una vez enviado el dato al hardware I2C, baja la bandera.
+    else u8x8.print("STOP "); 
+    cambioTransporte = false; 
   }
   
   if (cambioBPM) { 
-    u8x8.setCursor(9,0); // Posiciona en columna 9, fila 0.
+    u8x8.setCursor(9,0);
     u8x8.print("BPM:"); 
-    u8x8.print(BPM); // Imprime el valor entero directamente.
+    u8x8.print(BPM); 
     cambioBPM = false; 
   }
   
   for(int i=0; i<8; i++){
     if(cambioPasos[i]){
-      u8x8.setCursor(i*2, 2); // Multiplica el índice por 2 para espaciar las cajas horizontalmente. Fila 2.
-      // Operador ternario: si estadoPasos[i] es true imprime "[]", si es false imprime dos espacios "  ".
+      u8x8.setCursor(i*2, 2);
       u8x8.print(estadoPasos[i] ? "[]" : "  "); 
-      cambioPasos[i] = false; 
+      cambioPasos[i] = false;
     }
   }
 
   if (cambioCabezal) {
-    // Borrado selectivo: Sobrescribe la posición anterior del cursor con espacios vacíos.
-    u8x8.setCursor(pasoAnterior * 2, 3); // Fila 3, debajo de las cajas de paso.
-    u8x8.print("  "); 
-    
-    // Dibujo del nuevo cursor.
+    u8x8.setCursor(pasoAnterior * 2, 3); 
+    u8x8.print("  ");
     u8x8.setCursor(pasoActual * 2, 3);
     u8x8.print("^ "); 
-    
-    pasoAnterior = pasoActual; // Actualiza la memoria de borrado para el ciclo siguiente.
+    pasoAnterior = pasoActual;
     cambioCabezal = false;
   }
 
-  // 8.9 SALIDAS DIGITALES LED (Lógica de Ánodo Común: enviar LOW cierra el circuito y enciende la luz).
-  digitalWrite(PIN_LED_R, (estadoTransporte == 0) ? LOW : HIGH); // Si está en STOP, enciende el Rojo.
-  digitalWrite(PIN_LED_G, (estadoTransporte == 1) ? LOW : HIGH); // Si está en PLAY, enciende el Verde.
-}
-
-// =================================================================
-// 9. SUBRUTINA: TRANSMISOR SERIAL MIDI
-// =================================================================
-void enviarMIDI(byte comando, byte nota, byte velocidad) {
-  // Verifica los registros físicos del buffer de transmisión UART (USB).
-  // Solo envía si detecta que hay espacio disponible, evitando que el procesador se cuelgue esperando.
-  if (Serial.availableForWrite() >= 3) { 
-    Serial.write(comando);   // 1 byte: Tipo de mensaje (0x90 encender, 0x80 apagar).
-    Serial.write(nota);      // 1 byte: Altura (Pitch) en estándar MIDI.
-    Serial.write(velocidad); // 1 byte: Intensidad (Velocity).
-  }
+  digitalWrite(PIN_LED_R, (estadoTransporte == 0) ? LOW : HIGH); 
+  digitalWrite(PIN_LED_G, (estadoTransporte == 1) ? LOW : HIGH); 
 }
