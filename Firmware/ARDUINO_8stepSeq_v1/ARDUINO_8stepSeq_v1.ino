@@ -1,11 +1,15 @@
 #include <Arduino.h>
+#include <U8g2lib.h>
+#include <Wire.h>
+#include <Bounce2.h>
+#include <Encoder.h>
+
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE); // INSTANCIA DE PANTALLA OLED SH1106 128X64
 
 // DEFINO PINES DE PERIFERICOS IN/OUT Y VARIABLES
-const int pinPot = A4;
-const int pinBotones[8] = { 2, 3, 4, 5, 6, 7, 8, 9 };
+const int pinBotones[8] = { 5, 6, 7, 8, 9, 10, 11, 12 };
 
-const int pinBuzzer = A5;
-const int pinLeds[8] = { 10, 11, 12, 13, A0, A1, A2, A3 };
+const int pinBuzzer = A0;
 
 // DEFINO ESTADO DE PASOS Y ESCALA DEFAULT
 bool estadoPasos[8] = { true, true, true, true, true, true, true, true };  // INICIALIZO CON TODOS LOS PASOS ACTIVADOS
@@ -38,8 +42,7 @@ unsigned long tiempoRebote[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };                  // 
 int tiempoNegra;
 int BPM = 165;                     // BPM INICIAL ON THE RUN
 unsigned long tiempoPaso = 181;    // CALCULADO A PARTIR DEL BPM INICIAL PARA CORCHEAS
-int poteAnterior = 512;            // INICIALIZO LA MEMORIA DEL POTENCIOMETRO EN EL VALOR CENTRAL PARA EVITAR SALTOS INICIALES
-int lecturaPoteNotaAnterior = -1;  // MEMORIA PARA EVITAR REPETICIONES EN LA PANTALLA DURANTE EL MODO DE AFINACION
+
 
 // DEFINO CONTROL DE ESTADOS Y COMBOS
 bool enEjecucion = false;                                                                // FLAG GENERAL DE EJECUCION DEL SECUENCIADOR
@@ -57,11 +60,14 @@ void setup() {
   Serial.begin(9600);  // INICIALIZO SERIAL PARA MONITOREO DE DATOS Y ESTADOS
   delay(1000);         // PAUSO LA INICIALIZACION PARA QUE INICIE DESDE EL PASO 1 Y NO DESDE EL MOMENTO EN MILLIS QUE SE INICIA EL PROGRAMA
 
+  u8g2.begin(); // INICIALIZO LA PANTALLA OLED
+  u8g2.drawStr(0, 10, "Hola Mundo");
+
   pinMode(pinBuzzer, OUTPUT);  // CONFIGURO EL PIN DEL BUZZER COMO SALIDA
   for (int i = 0; i < 8; i++)  // CONFIGURO LOS PINES DE BOTONES COMO ENTRADA CON PULLUP Y LOS PINES DE LEDS COMO SALIDA
   {
     pinMode(pinBotones[i], INPUT_PULLUP);
-    pinMode(pinLeds[i], OUTPUT);
+  //  pinMode(pinLeds[i], OUTPUT);
   }
 
   // SINCRONIZACION DE ARRANQUE
@@ -74,7 +80,7 @@ void setup() {
 // ------------------------------------------------------------------
 // LOOP GENERAL
 // ------------------------------------------------------------------
-void loop() {
+void loop() {/*
   // ------------------------------------------------------------------
   // LECTURA DE COMBOS VIRTUALES
   // ------------------------------------------------------------------
@@ -108,7 +114,7 @@ void loop() {
     if (enEjecucion == false)  // SI PASA A STOP, APAGO EL SONIDO Y LOS LEDS
     {
       noTone(pinBuzzer);
-      digitalWrite(pinLeds[pasoActual], LOW);
+//      digitalWrite(pinLeds[pasoActual], LOW);
       Serial.println("--- SECUENCIADOR: STOP ---");
     } else  // SI REINICIA, VUELVO EL SECUENCIADOR AL PASO 8 PARA QUE EL MOTOR ARRANQUE EN EL PASO 1
     {
@@ -123,7 +129,7 @@ void loop() {
   bool comboResetAct = (digitalRead(pinBotones[0]) == LOW && digitalRead(pinBotones[4]) == LOW);  // LECTURA ACTUAL DEL COMBO RESET
   if (comboResetAct == true && comboResetAnt == false)                                            // EVALUO FLANCO DE SUBIDA
   {
-    digitalWrite(pinLeds[pasoActual], LOW);  // APAGO EL PASO ACTUAL
+    //digitalWrite(pinLeds[pasoActual], LOW);  // APAGO EL PASO ACTUAL
     noTone(pinBuzzer);                       // APAGO EL SONIDO
 
     pasoActual = 7;                    // REINICIO EL SECUENCIADOR
@@ -159,7 +165,7 @@ void loop() {
   // VERIFICO SI EL BPM ESTA BLOQUEADO POR RETENCION DE BOTON PARA CONTROLAR EL ACOPLAMIENTO MECANICO
   if (bpmBloqueado == true) {
     int poteObjetivo = map(BPM, 80, 220, 0, 1023);  // MAPEO EL VALOR DE BPM ACTUAL A UN VALOR OBJETIVO DEL POTENCIOMETRO
-    int lecturaActual = analogRead(pinPot);
+    //int lecturaActual = analogRead(pinPot);
 
     if (abs(lecturaActual - poteObjetivo) < 15)  // EVALUO SI LA LECTURA ACTUAL ESTA DENTRO DEL RANGO DE TOLERANCIA
     {
@@ -291,5 +297,5 @@ void loop() {
         tone(pinBuzzer, escala[notasPlay[pasoActual]]);
       }
     }
-  }
+  }*/
 }
