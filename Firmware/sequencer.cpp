@@ -59,7 +59,9 @@ long posicionEncoderAnt = 0;
 bool encoderUsadoEnPaso[8] = {false}; // Bandera para diferenciar una afinación de un muteo
 bool estadoAntA6 = HIGH;        // Registro previo del pin analógico A6
 unsigned long tiempoDebounceA6 = 0;
-bool actualizarPantalla = true; // Optimización de refresco de pantalla
+bool actualizarPantalla = true; // Refresco coalescido para evitar sobrecarga del OLED
+const unsigned long intervaloRefrescoOLED = 16; // ~60 Hz de refresco máximo
+unsigned long ultimoRefrescoOLED = 0;
 
 unsigned long tiempoUltimoClic = 0; // Temporizador para la detección de doble clic
 bool esperandoSegundoClic = false;
@@ -238,9 +240,10 @@ void loop() {
   // Salidas físicas secundarias (Luces e imágenes)
   controlarLeds();
   
-  if (actualizarPantalla) {
+  if (actualizarPantalla && (millis() - ultimoRefrescoOLED >= intervaloRefrescoOLED)) {
     dibujarOLED();
-    actualizarPantalla = false; 
+    actualizarPantalla = false;
+    ultimoRefrescoOLED = millis();
   }
 }
 
@@ -285,44 +288,38 @@ void controlarLeds() {
 void dibujarOLED() {
   u8g2.firstPage();
   do {
-    // Renderizado del bloque de cabecera
     u8g2.setFont(u8g2_font_ncenB08_tr);
-    if (estadoTransporte == 1) u8g2.drawStr(0, 10, "PLAY");
-    else if (estadoTransporte == 2) u8g2.drawStr(0, 10, "PAUSE");
-    else u8g2.drawStr(0, 10, "STOP");
-    
+    const char* estadoTexto = (estadoTransporte == 1) ? "PLAY" :
+                              (estadoTransporte == 2) ? "PAUSE" : "STOP";
+    u8g2.drawStr(0, 10, estadoTexto);
+
     u8g2.setCursor(70, 10);
-    u8g2.print(F("BPM: ")); 
+    u8g2.print(F("BPM: "));
     u8g2.print(BPM);
 
-    // Dibujo geométrico de las 8 cajas dinámicas
     u8g2.setFont(u8g2_font_4x6_tr);
     for (int i = 0; i < 8; i++) {
-      int posX = (i * 15) + 4; 
-      int posY = 35;           
-      
-      if (estadoPasos[i]) { 
-        if (i == pasoActual && estadoTransporte != 0) { 
-          // Estado: Cabezal sobre paso encendido (Caja rellena, texto invertido)
+      int posX = (i * 15) + 4;
+      int posY = 35;
+
+      if (estadoPasos[i]) {
+        if (i == pasoActual && estadoTransporte != 0) {
           u8g2.drawBox(posX, posY, 14, 20);
-          u8g2.setDrawColor(0); 
+          u8g2.setDrawColor(0);
           u8g2.setCursor(posX + 2, posY + 12);
           u8g2.print(nombresNotas[notasPlay[i]]);
-          u8g2.setDrawColor(1); 
+          u8g2.setDrawColor(1);
         } else {
-          // Estado: Paso encendido en espera (Caja hueca, texto visible)
           u8g2.drawFrame(posX, posY, 14, 20);
           u8g2.setCursor(posX + 2, posY + 12);
           u8g2.print(nombresNotas[notasPlay[i]]);
         }
-      } else { 
-        // Estado: Paso muteado (Caja vacía)
+      } else {
         u8g2.drawFrame(posX, posY, 14, 20);
         if (i == pasoActual && estadoTransporte != 0) {
-          // Indicador puntual de posición para mantener la referencia temporal
           u8g2.drawBox(posX + 5, posY + 8, 4, 4);
         }
       }
     }
-  } while ( u8g2.nextPage() ); 
+  } while (u8g2.nextPage());
 }
