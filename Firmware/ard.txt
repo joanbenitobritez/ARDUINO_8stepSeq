@@ -1,0 +1,117 @@
+Ard
+#include <Arduino.h>
+#include <U8x8lib.h> // Librería de modo texto ultrarrápida
+#include <Wire.h>
+#include <Bounce2.h>
+#include <Encoder.h>
+
+// Definición de la pantalla en modo hardware I2C para U8x8
+U8X8_SH1106_128X64_NONAME_HW_I2C u8x8(U8X8_PIN_NONE); 
+
+// --- HARDWARE ---
+Encoder miEncoder(2, 3);
+Bounce botones[8];
+Bounce btnEncSW = Bounce();
+Bounce btnStepMas = Bounce();
+
+const uint8_t PIN_BOTONES[8] = {5, 6, 7, 8, 9, 10, 11, 12};
+const uint8_t PIN_ENCODER_SW = 4;
+const uint8_t PIN_STEP_PLUS = A1;
+const uint8_t PIN_STEP_MINUS = A6; 
+const uint8_t PIN_BUZZER = A0;
+const uint8_t PIN_LED_G = A2;
+const uint8_t PIN_LED_R = A3;
+
+// --- VARIABLES Y BANDERAS (Dirty Flags) ---
+bool estadoPasos[8] = {true, true, true, true, true, true, true, true};
+int notasPlay[8] = {4, 7, 9, 11, 12, 14, 16, 14};
+bool cambioPasos[8] = {true, true, true, true, true, true, true, true};
+bool cambioTransporte = true;
+bool cambioBPM = true;
+
+const int escala[36] = {131, 139, 147, 156, 165, 175, 185, 196, 208, 220, 233, 247, 262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 784, 831, 880, 932, 988};
+const char *nombresNotas[36] = {"C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3", "A#3", "B3", "C4", "C#4", "D4", "D#4", "E4", "F4", "F#4", "G4", "G#4", "A4", "A#4", "B4", "C5", "C#5", "D5", "D#5", "E5", "F5", "F#5", "G5", "G#5", "A5", "A#5", "B5"};
+
+uint8_t estadoTransporte = 0; // 0=STOP, 1=PLAY, 2=PAUSE
+int BPM = 165;
+unsigned long tiempoPaso = 181;
+unsigned long relojSeq = 0;
+int pasoActual = 0;
+int notaMidiActual = -1;
+unsigned long tiempoUltimoClic = 0;
+
+void setup() {
+  Serial.begin(115200);
+  u8x8.begin();
+  u8x8.setFont(u8x8_font_chroma48medium8_r);
+  
+  pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_LED_R, OUTPUT);
+  pinMode(PIN_LED_G, OUTPUT);
+  
+  for (int i = 0; i < 8; i++) {
+    botones[i].attach(PIN_BOTONES[i], INPUT_PULLUP);
+    botones[i].interval(10);
+  }
+  btnEncSW.attach(PIN_ENCODER_SW, INPUT_PULLUP);
+  btnEncSW.interval(10);
+  btnStepMas.attach(PIN_STEP_PLUS, INPUT_PULLUP);
+  btnStepMas.interval(10);
+}
+
+void loop() {
+  // Inputs y Motor (Real-time puro)
+  for (int i = 0; i < 8; i++) botones[i].update();
+  btnEncSW.update();
+  btnStepMas.update();
+
+  if (btnEncSW.fell()) {
+    if (millis() - tiempoUltimoClic < 300) {
+      estadoTransporte = 0; pasoActual = 0; noTone(PIN_BUZZER);
+      if (notaMidiActual != -1) { enviarMIDI(0x80, notaMidiActual, 0); notaMidiActual = -1; }
+    } else {
+      estadoTransporte = (estadoTransporte == 1) ? 2 : 1;
+      if (estadoTransporte == 2) noTone(PIN_BUZZER);
+    }
+    tiempoUltimoClic = millis(); cambioTransporte = true;
+  }
+
+  if (estadoTransporte == 1 && (millis() - relojSeq >= tiempoPaso)) {
+    pasoActual = (pasoActual + 1) % 8; relojSeq = millis();
+    if (notaMidiActual != -1) { enviarMIDI(0x80, notaMidiActual, 0); notaMidiActual = -1; }
+    if (estadoPasos[pasoActual]) {
+      tone(PIN_BUZZER, escala[notasPlay[pasoActual]]);
+      notaMidiActual = 48 + notasPlay[pasoActual];
+      enviarMIDI(0x90, notaMidiActual, 127);
+    } else noTone(PIN_BUZZER);
+    cambioPasos[pasoActual] = true;
+  }
+
+  // Refresco selectivo (Dirty Flags)
+  if (cambioTransporte) {
+    u8x8.setCursor(0,0);
+    if(estadoTransporte==1) u8x8.print("PLAY "); else if(estadoTransporte==2) u8x8.print("PAUSE"); else u8x8.print("STOP ");
+    cambioTransporte = false;
+  }
+  if (cambioBPM) {
+    u8x8.setCursor(9,0); u8x8.print("BPM:"); u8x8.print(BPM);
+    cambioBPM = false;
+  }
+  for(int i=0; i<8; i++){
+    if(cambioPasos[i]){
+      u8x8.setCursor(i*2, 2);
+      u8x8.print(estadoPasos[i] ? "[]" : "  ");
+      cambioPasos[i] = false;
+    }
+  }
+
+  // Leds
+  digitalWrite(PIN_LED_R, (estadoTransporte == 0) ? LOW : HIGH);
+  digitalWrite(PIN_LED_G, (estadoTransporte == 1) ? LOW : HIGH);
+}
+
+void enviarMIDI(byte comando, byte nota, byte velocidad) {
+  if (Serial.availableForWrite() >= 3) {
+    Serial.write(comando); Serial.write(nota); Serial.write(velocidad);
+  }
+}
