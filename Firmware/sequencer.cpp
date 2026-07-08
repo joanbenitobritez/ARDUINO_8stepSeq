@@ -60,8 +60,10 @@ bool encoderUsadoEnPaso[8] = {false}; // Bandera para diferenciar una afinación
 bool estadoAntA6 = HIGH;        // Registro previo del pin analógico A6
 unsigned long tiempoDebounceA6 = 0;
 bool actualizarPantalla = true; // Refresco coalescido para evitar sobrecarga del OLED
-const unsigned long intervaloRefrescoOLED = 16; // ~60 Hz de refresco máximo
+const unsigned long intervaloRefrescoOLED = 100; // Refresco máximo más lento para priorizar audio
 unsigned long ultimoRefrescoOLED = 0;
+int ultimoPasoDibujado = -1;
+uint8_t ultimoEstadoTransporte = 255;
 
 unsigned long tiempoUltimoClic = 0; // Temporizador para la detección de doble clic
 bool esperandoSegundoClic = false;
@@ -112,36 +114,34 @@ void loop() {
   btnEncSW.update();
   btnStepMas.update();
 
-  // MÁQUINA DE ESTADOS: Detección de Doble Clic en el botón del Encoder
-  if (btnEncSW.fell()) { 
+  // MÁQUINA DE ESTADOS: Manejo del pulsador del encoder
+  if (btnEncSW.fell()) {
     if (esperandoSegundoClic && (millis() - tiempoUltimoClic < 300)) {
       // DOBLE CLIC CONFIRMADO -> Modo STOP
-      estadoTransporte = 0; 
-      pasoActual = 0; 
-      noTone(PIN_BUZZER);
-      if (notaMidiActual != -1) enviarMIDI(0x80, notaMidiActual, 0); // Note OFF externo
-      notaMidiActual = -1;
-      esperandoSegundoClic = false;
-      actualizarPantalla = true;
-    } else {
-      esperandoSegundoClic = true;
-      tiempoUltimoClic = millis();
-    }
-  }
-
-  // Evaluación de Clic Simple (Transcurrido el tiempo de espera del doble clic)
-  if (esperandoSegundoClic && (millis() - tiempoUltimoClic >= 300)) {
-    esperandoSegundoClic = false;
-    if (estadoTransporte == 1) { 
-      estadoTransporte = 2; // Si reproducía, pasa a PAUSE     
+      estadoTransporte = 0;
+      pasoActual = 0;
       noTone(PIN_BUZZER);
       if (notaMidiActual != -1) enviarMIDI(0x80, notaMidiActual, 0);
       notaMidiActual = -1;
-    } else {                     
-      estadoTransporte = 1; // Si estaba detenido o pausado, pasa a PLAY     
-      relojSeq = millis() - tiempoPaso; 
+      esperandoSegundoClic = false;
+    } else {
+      if (estadoTransporte == 1) {
+        estadoTransporte = 2; // PAUSE inmediato
+        noTone(PIN_BUZZER);
+        if (notaMidiActual != -1) enviarMIDI(0x80, notaMidiActual, 0);
+        notaMidiActual = -1;
+      } else {
+        estadoTransporte = 1; // PLAY inmediato
+        relojSeq = millis() - tiempoPaso;
+      }
+      esperandoSegundoClic = true;
+      tiempoUltimoClic = millis();
     }
     actualizarPantalla = true;
+  }
+
+  if (esperandoSegundoClic && (millis() - tiempoUltimoClic >= 300)) {
+    esperandoSegundoClic = false;
   }
 
   // CONTROLES MANUALES DE CABEZAL (Habilitados únicamente en modo PAUSE)
@@ -240,11 +240,23 @@ void loop() {
   // Salidas físicas secundarias (Luces e imágenes)
   controlarLeds();
   
-  if (actualizarPantalla && (millis() - ultimoRefrescoOLED >= intervaloRefrescoOLED)) {
-    dibujarOLED();
-    actualizarPantalla = false;
-    ultimoRefrescoOLED = millis();
+  bool debeRefrescar = actualizarPantalla && (millis() - ultimoRefrescoOLED >= intervaloRefrescoOLED);
+  if (debeRefrescar) {
+    if (estadoTransporte == 1) {
+      if (pasoActual != ultimoPasoDibujado || estadoTransporte != ultimoEstadoTransporte) {
+        dibujarOLED();
+        actualizarPantalla = false;
+        ultimoRefrescoOLED = millis();
+      }
+    } else {
+      dibujarOLED();
+      actualizarPantalla = false;
+      ultimoRefrescoOLED = millis();
+    }
   }
+
+  ultimoPasoDibujado = pasoActual;
+  ultimoEstadoTransporte = estadoTransporte;
 }
 
 // =================================================================
@@ -288,6 +300,7 @@ void controlarLeds() {
 void dibujarOLED() {
   u8g2.firstPage();
   do {
+    u8g2.setDrawColor(1);
     u8g2.setFont(u8g2_font_ncenB08_tr);
     const char* estadoTexto = (estadoTransporte == 1) ? "PLAY" :
                               (estadoTransporte == 2) ? "PAUSE" : "STOP";
