@@ -37,7 +37,7 @@ bool buzzerActivado = true;
 // ---- Variables Modo Teclado ----
 bool modoTeclado = false; 
 int tipoEscala = 0; // 0 = Mayor, 1 = Menor
-int raizTeclado = 12; // C4 (Índice 12 del arreglo nombresNotas)
+int raizTeclado = 12; // C4 (Índice 12)
 
 const int intervalosMayor[8] = {0, 2, 4, 5, 7, 9, 11, 12}; 
 const int intervalosMenor[8] = {0, 2, 3, 5, 7, 8, 10, 12}; 
@@ -89,10 +89,12 @@ void setup() {
   MIDI.turnThruOff(); 
 
   Wire.begin();
-  Wire.setWireTimeout(25000, true); 
+  // Se remueve setWireTimeout para evitar el corte por ráfaga inicial I2C
+  
   u8x8.begin();
   u8x8.setPowerSave(0); 
   u8x8.setFont(u8x8_font_chroma48medium8_r); 
+  u8x8.clearDisplay(); // Limpieza inicial obligatoria de la memoria de video
   
   pinMode(PIN_BUZZER, OUTPUT); 
   pinMode(PIN_LED_R, OUTPUT);
@@ -340,7 +342,7 @@ void loop() {
           MIDI.sendNoteOff(notasSonandoTeclado[i], 0, 1);
           noTone(PIN_BUZZER);
           notasSonandoTeclado[i] = -1;
-          notaMostradaPlay = -1; // NUEVO: Limpia la nota visual al soltar
+          notaMostradaPlay = -1; 
           refrescarTextosNotas = true; 
         }
       }
@@ -361,7 +363,7 @@ void loop() {
     
     if (cambioBPM) { 
       u8x8.setCursor(9,0);
-      char bufBPM[10];
+      char bufBPM[16]; // Aumentado para mayor seguridad
       snprintf(bufBPM, sizeof(bufBPM), "BPM:%d  ", BPM); 
       u8x8.print(bufBPM); 
       cambioBPM = false;
@@ -393,7 +395,7 @@ void loop() {
 
     if (refrescarTextosNotas) {
       u8x8.setCursor(0, 6);
-      char bufEdit[17];
+      char bufEdit[24]; // Aumentado para evitar truncamiento
       if (pasoEditadoActual != -1 && notaMostradaEdit != -1) {
         snprintf(bufEdit, sizeof(bufEdit), "EDIT P%d: %s   ", pasoEditadoActual, nombresNotas[notaMostradaEdit]);
       } else {
@@ -402,7 +404,7 @@ void loop() {
       u8x8.print(bufEdit);
 
       u8x8.setCursor(0, 7);
-      char bufPlay[17];
+      char bufPlay[24]; // Aumentado
       if (notaMostradaPlay != -1) {
         snprintf(bufPlay, sizeof(bufPlay), "PLAY: %s        ", nombresNotas[notaMostradaPlay]);
       } else {
@@ -417,23 +419,22 @@ void loop() {
     digitalWrite(PIN_LED_G, (estadoTransporte == 1) ? LOW : HIGH); 
 
   } else {
-    // NUEVO: La bandera "refrescarTextosNotas" ahora engloba todo el renderizado del Modo Teclado
     if (refrescarTextosNotas) {
       u8x8.setCursor(0, 0);
       u8x8.print("  MODO TECLADO  ");
       
       u8x8.setCursor(0, 3);
-      char bufEscala[17];
+      char bufEscala[24];
       snprintf(bufEscala, sizeof(bufEscala), "MODO: %s     ", (tipoEscala == 0) ? "MAYOR" : "MENOR");
       u8x8.print(bufEscala);
 
       u8x8.setCursor(0, 6);
-      char bufRaiz[17];
+      char bufRaiz[24];
       snprintf(bufRaiz, sizeof(bufRaiz), "RAIZ: %s        ", nombresNotas[raizTeclado]);
       u8x8.print(bufRaiz);
 
       u8x8.setCursor(0, 7);
-      char bufPlay[17];
+      char bufPlay[24];
       if (notaMostradaPlay != -1) {
         snprintf(bufPlay, sizeof(bufPlay), "PLAY: %s        ", nombresNotas[notaMostradaPlay]);
       } else {
