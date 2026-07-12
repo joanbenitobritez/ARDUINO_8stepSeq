@@ -83,13 +83,11 @@ bool estadoAntStepDn = HIGH;
 unsigned long ultimoMuestreoADC = 0; 
 
 void setup() {
-  // Retardo de estabilización eléctrica
   delay(200); 
 
   MIDI.begin(1);
-  MIDI.turnThruOff(); // Evita interrupciones innecesarias en el puerto serie
+  MIDI.turnThruOff(); 
 
-  // Configuración segura del bus I2C y Pantalla
   Wire.begin();
   Wire.setWireTimeout(25000, true); 
   u8x8.begin();
@@ -342,6 +340,8 @@ void loop() {
           MIDI.sendNoteOff(notasSonandoTeclado[i], 0, 1);
           noTone(PIN_BUZZER);
           notasSonandoTeclado[i] = -1;
+          notaMostradaPlay = -1; // NUEVO: Limpia la nota visual al soltar
+          refrescarTextosNotas = true; 
         }
       }
     }
@@ -417,15 +417,16 @@ void loop() {
     digitalWrite(PIN_LED_G, (estadoTransporte == 1) ? LOW : HIGH); 
 
   } else {
-    u8x8.setCursor(0, 0);
-    u8x8.print("  MODO TECLADO  ");
-    
-    u8x8.setCursor(0, 3);
-    char bufEscala[17];
-    snprintf(bufEscala, sizeof(bufEscala), "MODO: %s     ", (tipoEscala == 0) ? "MAYOR" : "MENOR");
-    u8x8.print(bufEscala);
-
+    // NUEVO: La bandera "refrescarTextosNotas" ahora engloba todo el renderizado del Modo Teclado
     if (refrescarTextosNotas) {
+      u8x8.setCursor(0, 0);
+      u8x8.print("  MODO TECLADO  ");
+      
+      u8x8.setCursor(0, 3);
+      char bufEscala[17];
+      snprintf(bufEscala, sizeof(bufEscala), "MODO: %s     ", (tipoEscala == 0) ? "MAYOR" : "MENOR");
+      u8x8.print(bufEscala);
+
       u8x8.setCursor(0, 6);
       char bufRaiz[17];
       snprintf(bufRaiz, sizeof(bufRaiz), "RAIZ: %s        ", nombresNotas[raizTeclado]);
