@@ -34,11 +34,16 @@ const uint8_t PIN_LED_R = A3;
 // =================================================================
 bool buzzerActivado = true;
 
+// ---- Variables Modo Teclado ----
 bool modoTeclado = false; 
-int octavaActual = 0;     
-const int escalaTeclado[8] = {0, 2, 4, 5, 7, 9, 11, 12}; 
+int tipoEscala = 0; // 0 = Mayor, 1 = Menor
+int raizTeclado = 12; // C4 (Índice 12 del arreglo nombresNotas)
+
+const int intervalosMayor[8] = {0, 2, 4, 5, 7, 9, 11, 12}; 
+const int intervalosMenor[8] = {0, 2, 3, 5, 7, 8, 10, 12}; 
 int notasSonandoTeclado[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; 
 
+// ---- Variables Secuenciador ----
 bool estadoPasos[8] = {true, true, true, true, true, true, true, true};
 int notasPlay[8] = {4, 7, 9, 11, 12, 14, 16, 14};
 
@@ -76,15 +81,23 @@ long posicionEncoderAnt = 0;
 
 bool estadoAntStepDn = HIGH;
 unsigned long ultimoMuestreoADC = 0; 
+// 1. Retardo de estabilización eléctrica para el panel OLED
+  delay(200); 
 
-void setup() {
+  // 2. Inicialización limpia del protocolo
   MIDI.begin(1);
+  MIDI.turnThruOff(); // Evita ecos de datos del NTS-1 que puedan saturar el procesador
+
+  // 3. Secuencia de seguridad para I2C
+  Wire.begin();
+  Wire.setWireTimeout(25000, true); // Evita que el Arduino se congele si la pantalla no responde
   u8x8.begin();
+  u8x8.setPowerSave(0); // Fuerza el encendido de la matriz de la pantalla
   u8x8.setFont(u8x8_font_chroma48medium8_r); 
   
   pinMode(PIN_BUZZER, OUTPUT); 
   pinMode(PIN_LED_R, OUTPUT);
-  pinMode(PIN_LED_G, OUTPUT); 
+  pinMode(PIN_LED_G, OUTPUT);
 
   for (int i = 0; i < 8; i++) {
     botones[i].attach(PIN_BOTONES[i], INPUT_PULLUP);
@@ -155,6 +168,34 @@ void loop() {
   // ---------------------------------------------------------------
   if (!modoTeclado) {
     
+    // Control Global de Buzzer y Avance/Retroceso Manual
+    if (btnStepUp.fell() && !dnActivo) { 
+      buzzerActivado = true;
+      if (estadoTransporte != 1) { // Avance manual solo en PAUSA/STOP
+        pasoActual = (pasoActual + 1) % 8;
+        if (estadoPasos[pasoActual]) {
+          if (buzzerActivado) tone(PIN_BUZZER, escala[notasPlay[pasoActual]], 100);
+          notaMostradaPlay = notasPlay[pasoActual];
+        }
+        cambioCabezal = true; 
+      }
+      refrescarTextosNotas = true;
+    }
+
+    if (stepDnPresionado && !upActivo) {
+      buzzerActivado = false;
+      noTone(PIN_BUZZER);
+      if (estadoTransporte != 1) { // Retroceso manual solo en PAUSA/STOP
+        pasoActual = (pasoActual - 1 + 8) % 8;
+        if (estadoPasos[pasoActual]) {
+          notaMostradaPlay = notasPlay[pasoActual];
+        }
+        cambioCabezal = true;
+      }
+      refrescarTextosNotas = true;
+    }
+
+    // Control de Transporte (Encoder SW)
     if (btnEncSW.fell()) { 
       if (millis() - tiempoUltimoClic < 300) { 
         estadoTransporte = 0; 
@@ -179,67 +220,6 @@ void loop() {
       }
       tiempoUltimoClic = millis();
       cambioTransporte = true;
-    }
-
-    if (estadoTransporte != 1) { 
-      if (btnStepUp.fell() && !dnActivo) { 
-        buzzerActivado = true;
-        pasoActual = (pasoActual + 1) % 8;
-        if (estadoPasos[pasoActual]) {
-          if (buzzerActivado) tone(PIN_BUZZER, escala[notasPlay[pasoActual]], 100);
-          notaMostradaPlay = notasPlay[pasoActual];
-          refrescarTextosNotas = true;
-        }
-        cambioCabezal = true; 
-      }
-
-      if (stepDnPresionado && !upActivo) {
-        buzzerActivado = false;
-        noTone(PIN_BUZZER);
-        pasoActual = (pasoActual - 1 + 8) % 8;
-        if (estadoPasos[pasoActual]) {
-          notaMostradaPlay = notasPlay[pasoActual];
-          refrescarTextosNotas = true;
-        }
-        cambioCabezal = true;
-      }
-    }
-
-    // CORRECCIÓN MATEMÁTICA ENCODER: División directa para evitar truncamiento
-    long posHw = miEncoder.read() / RESOLUCION_ENCODER;
-    int delta = posHw - posicionEncoderAnt;
-    
-    if (delta != 0) { 
-      posicionEncoderAnt = posHw;
-      bool afinandoPaso = false;
-      
-      for (int i = 0; i < 8; i++) { 
-        if (botones[i].read() == LOW) { 
-          notasPlay[i] += delta;
-          if (notasPlay[i] < 0) notasPlay[i] = 0; 
-          if (notasPlay[i] > 35) notasPlay[i] = 35; 
-          
-          encoderUsadoEnPaso[i] = true;
-          afinandoPaso = true;
-          cambioPasos[i] = true;
-          
-          notaMostradaEdit = notasPlay[i];
-          pasoEditadoActual = i + 1; 
-          refrescarTextosNotas = true;
-          
-          if (estadoTransporte != 1 && buzzerActivado) tone(PIN_BUZZER, escala[notasPlay[i]]);
-          
-          break; 
-        }
-      }
-      
-      if (!afinandoPaso) { 
-        BPM += (delta * 2);
-        if (BPM < 60) BPM = 60;
-        if (BPM > 240) BPM = 240;
-        tiempoPaso = 60000UL / BPM / FIGURA_MUSICAL; 
-        cambioBPM = true; 
-      }
     }
 
     if (estadoTransporte == 1 && (millis() - relojSeq >= tiempoPaso)) {
@@ -269,14 +249,61 @@ void loop() {
 
   } else {
     // ---- LÓGICA DIVIDIDA (TECLADO) ----
+    
+    // Botones laterales cambian la escala en Modo Teclado
     if (btnStepUp.fell() && !dnActivo) {
-      octavaActual++;
-      if (octavaActual > 2) octavaActual = 2; 
+      tipoEscala = 0; // Mayor
       refrescarTextosNotas = true;
     }
     if (stepDnPresionado && !upActivo) {
-      octavaActual--;
-      if (octavaActual < -2) octavaActual = -2; 
+      tipoEscala = 1; // Menor
+      refrescarTextosNotas = true;
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // ENRUTAMIENTO DEL ENCODER PRINCIPAL
+  // ---------------------------------------------------------------
+  long posHw = miEncoder.read() / RESOLUCION_ENCODER;
+  int delta = posHw - posicionEncoderAnt;
+  
+  if (delta != 0) { 
+    posicionEncoderAnt = posHw;
+    
+    if (!modoTeclado) {
+      bool afinandoPaso = false;
+      for (int i = 0; i < 8; i++) { 
+        if (botones[i].read() == LOW) { 
+          notasPlay[i] += delta;
+          if (notasPlay[i] < 0) notasPlay[i] = 0; 
+          if (notasPlay[i] > 35) notasPlay[i] = 35; 
+          
+          encoderUsadoEnPaso[i] = true;
+          afinandoPaso = true;
+          cambioPasos[i] = true;
+          
+          notaMostradaEdit = notasPlay[i];
+          pasoEditadoActual = i + 1; 
+          refrescarTextosNotas = true;
+          
+          if (estadoTransporte != 1 && buzzerActivado) tone(PIN_BUZZER, escala[notasPlay[i]]);
+          break; 
+        }
+      }
+      
+      if (!afinandoPaso) { 
+        BPM += (delta * 2);
+        if (BPM < 60) BPM = 60;
+        if (BPM > 240) BPM = 240;
+        tiempoPaso = 60000UL / BPM / FIGURA_MUSICAL; 
+        cambioBPM = true; 
+      }
+      
+    } else {
+      // Encoder en Modo Teclado cambia la Nota Raíz
+      raizTeclado += delta;
+      if (raizTeclado < 0) raizTeclado = 0; 
+      if (raizTeclado > 35) raizTeclado = 35; 
       refrescarTextosNotas = true;
     }
   }
@@ -289,10 +316,11 @@ void loop() {
       encoderUsadoEnPaso[i] = false;
       
       if (modoTeclado) {
-        int indiceBuzzer = escalaTeclado[i] + (octavaActual * 12);
+        int intervalo = (tipoEscala == 0) ? intervalosMayor[i] : intervalosMenor[i];
+        int indiceBuzzer = raizTeclado + intervalo;
         int notaMidi = 48 + indiceBuzzer;
-        notasSonandoTeclado[i] = notaMidi;
         
+        notasSonandoTeclado[i] = notaMidi;
         MIDI.sendNoteOn(notaMidi, 127, 1);
         
         if (indiceBuzzer >= 0 && indiceBuzzer <= 35) {
@@ -324,7 +352,7 @@ void loop() {
   }
 
   // ---------------------------------------------------------------
-  // F. RENDER PANTALLA (CON BUFFER snprintf PARA SEGURIDAD RP2040)
+  // F. RENDER PANTALLA 
   // ---------------------------------------------------------------
   if (!modoTeclado) {
     if (cambioTransporte) { 
@@ -338,7 +366,7 @@ void loop() {
     if (cambioBPM) { 
       u8x8.setCursor(9,0);
       char bufBPM[10];
-      snprintf(bufBPM, sizeof(bufBPM), "BPM:%d  ", BPM); // Formateo hermético
+      snprintf(bufBPM, sizeof(bufBPM), "BPM:%d  ", BPM); 
       u8x8.print(bufBPM); 
       cambioBPM = false;
     }
@@ -397,23 +425,25 @@ void loop() {
     u8x8.print("  MODO TECLADO  ");
     
     u8x8.setCursor(0, 3);
-    char bufOct[17];
-    if (octavaActual > 0) {
-      snprintf(bufOct, sizeof(bufOct), "OCTAVA: +%d      ", octavaActual);
-    } else {
-      snprintf(bufOct, sizeof(bufOct), "OCTAVA: %d      ", octavaActual);
-    }
-    u8x8.print(bufOct);
+    char bufEscala[17];
+    snprintf(bufEscala, sizeof(bufEscala), "MODO: %s     ", (tipoEscala == 0) ? "MAYOR" : "MENOR");
+    u8x8.print(bufEscala);
 
     if (refrescarTextosNotas) {
       u8x8.setCursor(0, 6);
-      char bufNota[17];
+      char bufRaiz[17];
+      snprintf(bufRaiz, sizeof(bufRaiz), "RAIZ: %s        ", nombresNotas[raizTeclado]);
+      u8x8.print(bufRaiz);
+
+      u8x8.setCursor(0, 7);
+      char bufPlay[17];
       if (notaMostradaPlay != -1) {
-        snprintf(bufNota, sizeof(bufNota), "NOTA: %s        ", nombresNotas[notaMostradaPlay]);
+        snprintf(bufPlay, sizeof(bufPlay), "PLAY: %s        ", nombresNotas[notaMostradaPlay]);
       } else {
-        snprintf(bufNota, sizeof(bufNota), "NOTA: --        ");
+        snprintf(bufPlay, sizeof(bufPlay), "PLAY: --        ");
       }
-      u8x8.print(bufNota);
+      u8x8.print(bufPlay);
+      
       refrescarTextosNotas = false;
     }
     
