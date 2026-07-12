@@ -81,23 +81,24 @@ long posicionEncoderAnt = 0;
 
 bool estadoAntStepDn = HIGH;
 unsigned long ultimoMuestreoADC = 0; 
-// 1. Retardo de estabilización eléctrica para el panel OLED
+
+void setup() {
+  // Retardo de estabilización eléctrica
   delay(200); 
 
-  // 2. Inicialización limpia del protocolo
   MIDI.begin(1);
-  MIDI.turnThruOff(); // Evita ecos de datos del NTS-1 que puedan saturar el procesador
+  MIDI.turnThruOff(); // Evita interrupciones innecesarias en el puerto serie
 
-  // 3. Secuencia de seguridad para I2C
+  // Configuración segura del bus I2C y Pantalla
   Wire.begin();
-  Wire.setWireTimeout(25000, true); // Evita que el Arduino se congele si la pantalla no responde
+  Wire.setWireTimeout(25000, true); 
   u8x8.begin();
-  u8x8.setPowerSave(0); // Fuerza el encendido de la matriz de la pantalla
+  u8x8.setPowerSave(0); 
   u8x8.setFont(u8x8_font_chroma48medium8_r); 
   
   pinMode(PIN_BUZZER, OUTPUT); 
   pinMode(PIN_LED_R, OUTPUT);
-  pinMode(PIN_LED_G, OUTPUT);
+  pinMode(PIN_LED_G, OUTPUT); 
 
   for (int i = 0; i < 8; i++) {
     botones[i].attach(PIN_BOTONES[i], INPUT_PULLUP);
@@ -168,10 +169,9 @@ void loop() {
   // ---------------------------------------------------------------
   if (!modoTeclado) {
     
-    // Control Global de Buzzer y Avance/Retroceso Manual
     if (btnStepUp.fell() && !dnActivo) { 
       buzzerActivado = true;
-      if (estadoTransporte != 1) { // Avance manual solo en PAUSA/STOP
+      if (estadoTransporte != 1) { 
         pasoActual = (pasoActual + 1) % 8;
         if (estadoPasos[pasoActual]) {
           if (buzzerActivado) tone(PIN_BUZZER, escala[notasPlay[pasoActual]], 100);
@@ -185,7 +185,7 @@ void loop() {
     if (stepDnPresionado && !upActivo) {
       buzzerActivado = false;
       noTone(PIN_BUZZER);
-      if (estadoTransporte != 1) { // Retroceso manual solo en PAUSA/STOP
+      if (estadoTransporte != 1) { 
         pasoActual = (pasoActual - 1 + 8) % 8;
         if (estadoPasos[pasoActual]) {
           notaMostradaPlay = notasPlay[pasoActual];
@@ -195,7 +195,6 @@ void loop() {
       refrescarTextosNotas = true;
     }
 
-    // Control de Transporte (Encoder SW)
     if (btnEncSW.fell()) { 
       if (millis() - tiempoUltimoClic < 300) { 
         estadoTransporte = 0; 
@@ -249,14 +248,12 @@ void loop() {
 
   } else {
     // ---- LÓGICA DIVIDIDA (TECLADO) ----
-    
-    // Botones laterales cambian la escala en Modo Teclado
     if (btnStepUp.fell() && !dnActivo) {
-      tipoEscala = 0; // Mayor
+      tipoEscala = 0; 
       refrescarTextosNotas = true;
     }
     if (stepDnPresionado && !upActivo) {
-      tipoEscala = 1; // Menor
+      tipoEscala = 1; 
       refrescarTextosNotas = true;
     }
   }
@@ -300,7 +297,6 @@ void loop() {
       }
       
     } else {
-      // Encoder en Modo Teclado cambia la Nota Raíz
       raizTeclado += delta;
       if (raizTeclado < 0) raizTeclado = 0; 
       if (raizTeclado > 35) raizTeclado = 35; 
