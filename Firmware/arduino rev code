@@ -1,0 +1,256 @@
+#include <Arduino.h>
+#include <U8x8lib.h> 
+#include <Wire.h>    
+#include <Bounce2.h> 
+#include <Encoder.h> 
+#include <MIDI.h>    // Librería oficial de FortySevenEffects para abstracción del protocolo MIDI
+
+// =================================================================
+// 1. INSTANCIAS DE HARDWARE Y PROTOCOLO
+// =================================================================
+// Pantalla OLED en modo texto directo (sin buffer de RAM)
+U8X8_SH1106_128X64_NONAME_HW_I2C u8x8(U8X8_PIN_NONE); 
+
+// Encoder rotativo usando interrupciones de hardware puras en pines 2 y 3
+Encoder miEncoder(2, 3);          
+
+// Filtros RC por software para botones digitales
+Bounce botones[8];                
+Bounce btnEncSW = Bounce();
+Bounce btnStepUp = Bounce(); 
+
+// Instancia global del motor MIDI en el puerto serie por defecto
+MIDI_CREATE_DEFAULT_INSTANCE();
+
+// =================================================================
+// 2. ASIGNACIÓN DE PINES
+// =================================================================
+const uint8_t PIN_BOTONES[8] = {5, 6, 7, 8, 9, 10, 11, 12};
+const uint8_t PIN_ENCODER_SW = 4;
+const uint8_t PIN_STEP_UP = A1;
+// Pin A6 (ADC exclusivo sin registro digital). Se lee por voltaje, no usa Bounce2.
+const uint8_t PIN_STEP_DN = A6; 
+const uint8_t PIN_BUZZER = A0;
+const uint8_t PIN_LED_G = A2;
+const uint8_t PIN_LED_R = A3;
+
+// =================================================================
+// 3. VARIABLES DE ESTADO Y DIRTY FLAGS
+// =================================================================
+bool estadoPasos[8] = {true, true, true, true, true, true, true, true};
+int notasPlay[8] = {4, 7, 9, 11, 12, 14, 16, 14};
+
+// Banderas de actualización selectiva (Dirty Flags)
+bool cambioPasos[8] = {true, true, true, true, true, true, true, true}; 
+bool cambioTransporte = true; 
+bool cambioBPM = true;
+bool cambioCabezal = true;
+bool encoderUsadoEnPaso[8] = {false};
+
+const int escala[36] = {131, 139, 147, 156, 165, 175, 185, 196, 208, 220, 233, 247, 262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 784, 831, 880, 932, 988};
+const char *nombresNotas[36] = {"C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3", "A#3", "B3", "C4", "C#4", "D4", "D#4", "E4", "F4", "F#4", "G4", "G#4", "A4", "A#4", "B4", "C5", "C#5", "D5", "D#5", "E5", "F5", "F#5", "G5", "G#5", "A5", "A#5", "B5"};
+
+// =================================================================
+// 4. MOTOR DE TIEMPO
+// =================================================================
+uint8_t estadoTransporte = 0; // 0=STOP, 1=PLAY, 2=PAUSE
+int BPM = 165;
+unsigned long tiempoPaso = 181; 
+unsigned long relojSeq = 0;
+int pasoActual = 0;
+int pasoAnterior = 0;           
+int notaMidiActual = -1;        
+unsigned long tiempoUltimoClic = 0; 
+long posicionEncoderAnt = 0;    
+
+// Variables para debounce analógico (Filtro por software sobre ADC)
+bool estadoAntStepDn = HIGH;
+unsigned long tiempoDebounceStepDn = 0;
+
+void setup() {
+  // Inicializa la librería MIDI. Por defecto configura el puerto a 31250 baudios.
+  MIDI.begin(1); 
+  // Sobrescribimos el baudrate a 115200 para maximizar la velocidad sobre USB.
+  Serial.begin(115200); 
+
+  u8x8.begin();
+  u8x8.setFont(u8x8_font_chroma48medium8_r); 
+  
+  pinMode(PIN_BUZZER, OUTPUT); 
+  pinMode(PIN_LED_R, OUTPUT);
+  pinMode(PIN_LED_G, OUTPUT); 
+
+  for (int i = 0; i < 8; i++) {
+    botones[i].attach(PIN_BOTONES[i], INPUT_PULLUP);
+    botones[i].interval(10);
+  }
+  
+  btnEncSW.attach(PIN_ENCODER_SW, INPUT_PULLUP);
+  btnEncSW.interval(10);
+  btnStepUp.attach(PIN_STEP_UP, INPUT_PULLUP); 
+  btnStepUp.interval(10);
+}
+
+void loop() {
+  // ---------------------------------------------------------------
+  // A. PRIORIDAD 1: ESCANEO DE ENTRADAS (Polling & ADC)
+  // ---------------------------------------------------------------
+  for (int i = 0; i < 8; i++) botones[i].update();
+  btnEncSW.update();
+  btnStepUp.update();  
+
+  // Debounce manual para el pin analógico A6 (Lectura de divisor de tensión)
+  bool estadoActualStepDn = (analogRead(PIN_STEP_DN) < 500) ? LOW : HIGH;
+  bool stepDnPresionado = false;
+  
+  if (estadoActualStepDn != estadoAntStepDn && millis() - tiempoDebounceStepDn > 15) {
+    if (estadoActualStepDn == LOW) stepDnPresionado = true; 
+    estadoAntStepDn = estadoActualStepDn; 
+    tiempoDebounceStepDn = millis();      
+  }
+
+  // ---------------------------------------------------------------
+  // B. PRIORIDAD 2: MÁQUINA DE ESTADOS DEL TRANSPORTE
+  // ---------------------------------------------------------------
+  if (btnEncSW.fell()) { 
+    if (millis() - tiempoUltimoClic < 300) { 
+      estadoTransporte = 0; // STOP
+      pasoActual = 0;       
+      cambioCabezal = true; 
+      noTone(PIN_BUZZER);
+      
+      if (notaMidiActual != -1) { 
+        MIDI.sendNoteOff(notaMidiActual, 0, 1);
+        notaMidiActual = -1; 
+      }
+    } else {
+      estadoTransporte = (estadoTransporte == 1) ? 2 : 1;
+      if (estadoTransporte == 2) noTone(PIN_BUZZER);
+    }
+    tiempoUltimoClic = millis();
+    cambioTransporte = true;
+  }
+
+  // ---------------------------------------------------------------
+  // C. CONTROLES MANUALES (Solo en PAUSE)
+  // ---------------------------------------------------------------
+  if (estadoTransporte == 2) { 
+    if (btnStepUp.fell()) {
+      pasoActual = (pasoActual + 1) % 8;
+      if (estadoPasos[pasoActual]) tone(PIN_BUZZER, escala[notasPlay[pasoActual]], 100);
+      cambioCabezal = true; 
+    }
+
+    if (stepDnPresionado) {
+      pasoActual = (pasoActual - 1 + 8) % 8; 
+      if (estadoPasos[pasoActual]) tone(PIN_BUZZER, escala[notasPlay[pasoActual]], 100);
+      cambioCabezal = true;
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // D. ESCANEO DEL ENCODER Y AFINACIÓN
+  // ---------------------------------------------------------------
+  long posActual = miEncoder.read() / 4;
+  int delta = posActual - posicionEncoderAnt;
+
+  if (delta != 0) { 
+    bool afinandoPaso = false;
+
+    for (int i = 0; i < 8; i++) { 
+      if (botones[i].read() == LOW) { 
+        notasPlay[i] += delta;
+        if (notasPlay[i] < 0) notasPlay[i] = 0; 
+        if (notasPlay[i] > 35) notasPlay[i] = 35; 
+        
+        encoderUsadoEnPaso[i] = true;
+        afinandoPaso = true;
+        cambioPasos[i] = true;
+        
+        if (estadoTransporte != 1) tone(PIN_BUZZER, escala[notasPlay[i]], 100); 
+      }
+    }
+    
+    if (!afinandoPaso) { 
+      BPM += (delta * 2);
+      if (BPM < 60) BPM = 60;
+      if (BPM > 240) BPM = 240; 
+      
+      tiempoPaso = 60000UL / BPM / 2; 
+      cambioBPM = true; 
+    }
+    posicionEncoderAnt = posActual; 
+  }
+
+  for (int i = 0; i < 8; i++) {
+    if (botones[i].fell()) encoderUsadoEnPaso[i] = false; 
+    
+    if (botones[i].rose()) { 
+      if (!encoderUsadoEnPaso[i]) { 
+        estadoPasos[i] = !estadoPasos[i];
+        cambioPasos[i] = true;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // E. PRIORIDAD MÁXIMA: MOTOR DEL SECUENCIADOR Y AUDIO
+  // ---------------------------------------------------------------
+  if (estadoTransporte == 1 && (millis() - relojSeq >= tiempoPaso)) {
+    pasoActual = (pasoActual + 1) % 8;
+    relojSeq = millis(); 
+    
+    if (notaMidiActual != -1) { 
+      MIDI.sendNoteOff(notaMidiActual, 0, 1); 
+      notaMidiActual = -1;
+    }
+    
+    if (estadoPasos[pasoActual]) { 
+      tone(PIN_BUZZER, escala[notasPlay[pasoActual]]);
+      notaMidiActual = 48 + notasPlay[pasoActual];
+      MIDI.sendNoteOn(notaMidiActual, 127, 1);           
+    } else {
+      noTone(PIN_BUZZER); 
+    }
+    cambioPasos[pasoActual] = true; 
+    cambioCabezal = true;
+  }
+
+  // ---------------------------------------------------------------
+  // F. PRIORIDAD BAJA: RENDERIZADO VISUAL ASÍNCRONO
+  // ---------------------------------------------------------------
+  if (cambioTransporte) { 
+    u8x8.setCursor(0,0); 
+    if(estadoTransporte==1) u8x8.print("PLAY ");
+    else if(estadoTransporte==2) u8x8.print("PAUSE"); 
+    else u8x8.print("STOP "); 
+    cambioTransporte = false; 
+  }
+  
+  if (cambioBPM) { 
+    u8x8.setCursor(9,0);
+    u8x8.print("BPM:"); 
+    u8x8.print(BPM); 
+    cambioBPM = false; 
+  }
+  
+  for(int i=0; i<8; i++){
+    if(cambioPasos[i]){
+      u8x8.setCursor(i*2, 2);
+      u8x8.print(estadoPasos[i] ? "[]" : "  "); 
+      cambioPasos[i] = false;
+    }
+  }
+
+  if (cambioCabezal) {
+    u8x8.setCursor(pasoAnterior * 2, 3); 
+    u8x8.print("  ");
+    u8x8.setCursor(pasoActual * 2, 3);
+    u8x8.print("^ "); 
+    pasoAnterior = pasoActual;
+    cambioCabezal = false;
+  }
+
+  digitalWrite(PIN_LED_R, (estadoTransporte == 0) ? LOW : HIGH); 
+  digitalWrite(PIN_LED_G, (estadoTransporte == 1) ? LOW : HIGH); 
+}
