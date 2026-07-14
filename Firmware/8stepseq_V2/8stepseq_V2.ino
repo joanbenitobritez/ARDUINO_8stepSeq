@@ -10,19 +10,19 @@
 // =================================================================
 U8X8_SH1106_128X64_NONAME_HW_I2C u8x8(U8X8_PIN_NONE);
 Encoder miEncoder(2, 3);          
-Bounce botones[8];                
-Bounce btnEncSW = Bounce();
+Bounce botones[8];                //explicar uso de funcion bounce (es una funcion?)
+Bounce btnEncSW = Bounce(); //explicar bounce aqui
 Bounce btnStepUp = Bounce();
 MIDI_CREATE_DEFAULT_INSTANCE();
 
 // =================================================================
 // 2. CONFIGURACIÓN TÉCNICA Y ASIGNACIÓN DE PINES
 // =================================================================
-const int RESOLUCION_ENCODER = 4; 
-const int FIGURA_MUSICAL = 4;     
+const int RESOLUCION_ENCODER = 4; //que hace esta variable y por que 4?
+const int FIGURA_MUSICAL = 4;     //que hace esta variable y por que 4? por que figura musical es una variable si siembre vale 4?
 
-const uint8_t PIN_BOTONES[8] = {5, 6, 7, 8, 9, 10, 11, 12};
-const uint8_t PIN_ENCODER_SW = 4;
+const uint8_t PIN_BOTONES[8] = {5, 6, 7, 8, 9, 10, 11, 12}; //explica por que usa uint8_t
+const uint8_t PIN_ENCODER_SW = 4; //que hace esta variable y por que 4?
 const uint8_t PIN_STEP_UP = A1;
 const uint8_t PIN_STEP_DN = A6; 
 const uint8_t PIN_BUZZER = A0;
@@ -36,28 +36,28 @@ bool buzzerActivado = true;
 
 // ---- Variables Modo Teclado ----
 bool modoTeclado = false; 
-int tipoEscala = 0; // 0 = Mayor, 1 = Menor
+int tipoEscala = 0; // 0 = Mayor, 1 = Menor 
 int raizTeclado = 12; // C4 (Índice 12)
 
 const int intervalosMayor[8] = {0, 2, 4, 5, 7, 9, 11, 12}; 
 const int intervalosMenor[8] = {0, 2, 3, 5, 7, 8, 10, 12}; 
-int notasSonandoTeclado[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; 
+int notasSonandoTeclado[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; //explicar funcion, por que -1
 
 // ---- Variables Secuenciador ----
 bool estadoPasos[8] = {true, true, true, true, true, true, true, true};
 int notasPlay[8] = {4, 7, 9, 11, 12, 14, 16, 14};
 
-bool cambioPasos[8] = {true, true, true, true, true, true, true, true};
-bool cambioTransporte = true; 
-bool cambioBPM = true;
-bool cambioCabezal = true;
-bool refrescarTextosNotas = true; 
+bool cambioPasos[8] = {true, true, true, true, true, true, true, true}; //explicar funcion
+bool cambioTransporte = true; //explicar funcion
+bool cambioBPM = true; //explicar funcion
+bool cambioCabezal = true; //explicar funcion
+bool refrescarTextosNotas = true; //explicar funcion
 
-bool encoderUsadoEnPaso[8] = {false};
+bool encoderUsadoEnPaso[8] = {false}; //explicar funcion
 
-int notaMostradaEdit = -1;
-int pasoEditadoActual = -1; 
-int notaMostradaPlay = -1;
+int notaMostradaEdit = -1; //explicar funcion, por que -1
+int pasoEditadoActual = -1; //explicar funcion, por que -1
+int notaMostradaPlay = -1;//explicar funcion, por que -1
 
 const int escala[36] = {131, 139, 147, 156, 165, 175, 185, 196, 208, 220, 233, 247, 262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 784, 831, 880, 932, 988};
 const char *nombresCortos[12] = {"C ", "C#", "D ", "D#", "E ", "F ", "F#", "G ", "G#", "A ", "A#", "B "};
@@ -66,34 +66,34 @@ const char *nombresNotas[36] = {"C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3
 // =================================================================
 // 4. MOTOR DE TIEMPO
 // =================================================================
-uint8_t estadoTransporte = 0; 
+uint8_t estadoTransporte = 0; //explicar funcion
 int BPM = 165;
 unsigned long tiempoPaso = 181; 
 unsigned long relojSeq = 0;
 int pasoActual = 0;
 int pasoAnterior = 0;
 
-int notaMidiActual = -1;        
-unsigned long tiempoInicioNota = 0; 
+int notaMidiActual = -1;  //explicar funcion, por que -1      
+unsigned long tiempoInicioNota = 0; //explicar funcion
 
-unsigned long tiempoUltimoClic = 0; 
-long posicionEncoderAnt = 0;
+unsigned long tiempoUltimoClic = 0; //explicar funcion, por que -1
+long posicionEncoderAnt = 0;//explicar funcion, por que -1
 
-bool estadoAntStepDn = HIGH;
-unsigned long ultimoMuestreoADC = 0; 
+bool estadoAntStepDn = HIGH; //explicar por que guardo el estado anterior y por que high
+unsigned long ultimoMuestreoADC = 0; //explicar variable, por que llamas ultimomuestreoadc y no simplemente ultimo estado boton- o algo asi? entiendo que es un divisor de tension pero me parece poco intuitivo el nombra
 
 void setup() {
   delay(200); 
 
-  MIDI.begin(1);
-  MIDI.turnThruOff(); 
+  MIDI.begin(1); //por que (1)
+  MIDI.turnThruOff(); //por que turnthruoff, es necesario?
 
-  Wire.begin();
+  Wire.begin(); //que hace wire?
   // Se remueve setWireTimeout para evitar el corte por ráfaga inicial I2C
   
-  u8x8.begin();
-  u8x8.setPowerSave(0); 
-  u8x8.setFont(u8x8_font_chroma48medium8_r); 
+  u8x8.begin(); //que hace u8x8
+  u8x8.setPowerSave(0); //explicar funcion 
+  u8x8.setFont(u8x8_font_chroma48medium8_r); //explicar funcion y por que esta fuente
   u8x8.clearDisplay(); // Limpieza inicial obligatoria de la memoria de video
   
   pinMode(PIN_BUZZER, OUTPUT); 
@@ -105,8 +105,8 @@ void setup() {
     botones[i].interval(10);
   }
   
-  btnEncSW.attach(PIN_ENCODER_SW, INPUT_PULLUP);
-  btnEncSW.interval(10);
+  btnEncSW.attach(PIN_ENCODER_SW, INPUT_PULLUP); //que es attach
+  btnEncSW.interval(10); //que es interval?
   btnStepUp.attach(PIN_STEP_UP, INPUT_PULLUP); 
   btnStepUp.interval(10);
   
@@ -117,13 +117,13 @@ void loop() {
   // ---------------------------------------------------------------
   // A. ESCANEO DE ENTRADAS
   // ---------------------------------------------------------------
-  for (int i = 0; i < 8; i++) botones[i].update();
-  btnEncSW.update();
+  for (int i = 0; i < 8; i++) botones[i].update(); 
+  btnEncSW.update(); //que es update y por que se hace aqui?
   btnStepUp.update();  
 
-  bool stepDnPresionado = false;
-  if (millis() - ultimoMuestreoADC >= 10) {
-    bool estadoActualStepDn = (analogRead(PIN_STEP_DN) < 500) ? LOW : HIGH;
+  bool stepDnPresionado = false; //por que lo ponemos como false en cada vuelta? por que no evaluar el estado?
+  if (millis() - ultimoMuestreoADC >= 10) { //por que usamos el muestreo adc y no un valod booleano?
+    bool estadoActualStepDn = (analogRead(PIN_STEP_DN) < 500) ? LOW : HIGH; // no entiendo ? LOW : HIGH;
     if (estadoActualStepDn != estadoAntStepDn) {
       if (estadoActualStepDn == LOW) stepDnPresionado = true;
       estadoAntStepDn = estadoActualStepDn;
